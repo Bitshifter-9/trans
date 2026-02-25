@@ -25,7 +25,7 @@ def match_durations(input_meta_path, output_dir="output"):
             continue
 
         ratio = tts_dur / target_dur
-        ratio = max(0.5, min(ratio, 2.0))
+        ratio = max(0.5, min(ratio, 8.0))
 
         filters = build_tempo_filter(ratio)
         filters += f",apad=whole_dur={target_dur}"

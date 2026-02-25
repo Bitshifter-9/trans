@@ -61,18 +61,36 @@ def synthesize_all(input_meta_path, original_audio_path, output_dir="output"):
             continue
 
         wav_path = os.path.join(tts_dir, f"seg_{i:04d}.wav")
+        target_duration = seg["end"] - seg["start"]
 
-        audio_arr, sr, _ = tts.infer(
+        tmp_path = wav_path + ".tmp.wav"
+        tts.infer(
             ref_file=ref_clip_path,
             ref_text=ref_text,
             gen_text=hindi_text,
-            file_wave=wav_path,
+            file_wave=tmp_path,
             remove_silence=True,
             seed=42
         )
+        natural_dur = get_audio_duration(tmp_path)
+        speed_needed = natural_dur / target_duration
+        speed_needed = max(0.8, min(speed_needed, 3.5))
+
+        if speed_needed > 1.15:
+            tts.infer(
+                ref_file=ref_clip_path,
+                ref_text=ref_text,
+                gen_text=hindi_text,
+                file_wave=wav_path,
+                remove_silence=True,
+                speed=speed_needed,
+                seed=42
+            )
+            os.remove(tmp_path)
+        else:
+            os.rename(tmp_path, wav_path)
 
         duration = get_audio_duration(wav_path)
-        target_duration = seg["end"] - seg["start"]
 
         tts_segments.append({
             "index": i,
