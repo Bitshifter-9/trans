@@ -6,8 +6,8 @@ def translate(input_meta_path, output_dir="output"):
     with open(input_meta_path) as f:
         asr_data = json.load(f)
 
-    model_name = "facebook/nllb-200-distilled-600M"
-    print(f"[Step 3] Loading NLLB-200: {model_name}")
+    model_name = "facebook/nllb-200-1.3B"
+    print(f"[Step 3] Loading NLLB-200 (1.3B): {model_name}")
     tokenizer = AutoTokenizer.from_pretrained(model_name, src_lang="eng_Latn")
     model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
 
