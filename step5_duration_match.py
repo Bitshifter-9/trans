@@ -27,14 +27,9 @@ def match_durations(input_meta_path, output_dir="output"):
         ratio = tts_dur / target_dur
 
         if tts_dur <= target_dur:
-            # Slow speech down (max 0.75x) to fill the window naturally;
-            # only pad a small residual silence rather than a big gap.
-            slow_ratio = max(ratio, 0.75)  # never slower than 0.75x
-            if slow_ratio < 0.98:           # worth slowing down
-                filters = build_tempo_filter(slow_ratio)
-                filters += f",apad=whole_dur={target_dur}"
-            else:                           # near-perfect fit, just pad
-                filters = f"apad=whole_dur={target_dur}"
+            # Play at natural speed; pad silence for the remainder.
+            # Stretching speech is more jarring than a silent tail.
+            filters = f"apad=whole_dur={target_dur}"
             cmd = [
                 "ffmpeg", "-y", "-i", wav_in,
                 "-af", filters,
