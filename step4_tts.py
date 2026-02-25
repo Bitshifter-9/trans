@@ -1,36 +1,75 @@
-import torch
-import torchaudio
-from chatterbox.tts import ChatterboxTTS
 import json, sys, os, subprocess
+import numpy as np
+import soundfile as sf
+from f5_tts.api import F5TTS
 
 
-def synthesize_all(input_meta_path, ref_audio_path, output_dir="output"):
+def extract_reference_clip(source_wav, start, end, out_path, min_dur=5.0, max_dur=12.0):
+    duration = min(end - start, max_dur)
+    duration = max(duration, min(end - start, min_dur))
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", source_wav,
+         "-ss", str(start), "-t", str(duration),
+         "-ar", "24000", "-ac", "1", out_path],
+        capture_output=True, text=True
+    )
+
+
+def get_audio_duration(path):
+    result = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", path],
+        capture_output=True, text=True
+    )
+    data = json.loads(result.stdout)
+    return float(data["format"]["duration"])
+
+
+def synthesize_all(input_meta_path, original_audio_path, output_dir="output"):
     with open(input_meta_path) as f:
         tr_data = json.load(f)
 
     tts_dir = os.path.join(output_dir, "tts_segments")
     os.makedirs(tts_dir, exist_ok=True)
 
-    print("[Step 4] Loading Chatterbox TTS...")
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
-    model = ChatterboxTTS.from_pretrained(device=device)
-
     segments = tr_data["segments"]
+
+    print("[Step 4] Loading F5-TTS model...")
+    tts = F5TTS(device="cpu")
+
+    ref_clip_path = os.path.join(output_dir, "ref_speaker.wav")
+    best_ref = max(
+        [s for s in segments if (s["end"] - s["start"]) >= 3.0],
+        key=lambda s: s["end"] - s["start"],
+        default=segments[0]
+    )
+    extract_reference_clip(
+        original_audio_path,
+        best_ref["start"],
+        best_ref["end"],
+        ref_clip_path
+    )
+    ref_text = best_ref.get("english", "").strip() or "This is a reference audio sample."
+    print(f"[Step 4] Reference: {best_ref['start']:.1f}s-{best_ref['end']:.1f}s | text: {ref_text[:60]}")
+
     tts_segments = []
 
-    print(f"[Step 4] Generating Hindi speech for {len(segments)} segments...")
-    print(f"[Step 4] Using reference voice: {ref_audio_path}")
-    print(f"[Step 4] Device: {device}")
+    print(f"[Step 4] Generating Hindi speech with voice cloning for {len(segments)} segments...")
 
     for i, seg in enumerate(segments):
-        hindi_text = seg["hindi"]
-        if not hindi_text.strip():
+        hindi_text = seg.get("hindi", "").strip()
+        if not hindi_text:
             continue
 
         wav_path = os.path.join(tts_dir, f"seg_{i:04d}.wav")
 
-        wav = model.generate(hindi_text, audio_prompt_path=ref_audio_path)
-        torchaudio.save(wav_path, wav, model.sr)
+        audio_arr, sr = tts.infer(
+            ref_file=ref_clip_path,
+            ref_text=ref_text,
+            gen_text=hindi_text,
+            file_wave=wav_path,
+            remove_silence=True,
+            seed=42
+        )
 
         duration = get_audio_duration(wav_path)
         target_duration = seg["end"] - seg["start"]
@@ -45,12 +84,12 @@ def synthesize_all(input_meta_path, ref_audio_path, output_dir="output"):
             "wav_path": os.path.abspath(wav_path)
         })
 
-        print(f"  [{i:03d}] {target_duration:.2f}s target | {duration:.2f}s tts | {hindi_text[:40]}")
+        print(f"  [{i:03d}] {target_duration:.2f}s target | {duration:.2f}s tts | {hindi_text[:50]}")
 
     info = {
-        "tts_engine": "chatterbox",
-        "reference_audio": ref_audio_path,
-        "device": device,
+        "tts_engine": "f5-tts",
+        "ref_text": ref_text,
+        "ref_clip": ref_clip_path,
         "total_segments": len(tts_segments),
         "segments": tts_segments
     }
@@ -63,16 +102,7 @@ def synthesize_all(input_meta_path, ref_audio_path, output_dir="output"):
     return info
 
 
-def get_audio_duration(path):
-    result = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", path],
-        capture_output=True, text=True
-    )
-    data = json.loads(result.stdout)
-    return float(data["format"]["duration"])
-
-
 if __name__ == "__main__":
     meta = sys.argv[1] if len(sys.argv) > 1 else "output/step3_meta.json"
-    ref = sys.argv[2] if len(sys.argv) > 2 else "output/audio.wav"
-    synthesize_all(meta, ref)
+    orig_audio = sys.argv[2] if len(sys.argv) > 2 else "output/audio.wav"
+    synthesize_all(meta, orig_audio)
