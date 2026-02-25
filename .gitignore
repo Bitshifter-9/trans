@@ -1,8 +1,14 @@
 .venv/
-output/
 __pycache__/
 *.pyc
-*.wav
-*.mp4
 Wav2Lip/
 .DS_Store
+
+# Block source videos (too large / private)
+input.mp4
+
+# Block all output files by default, then allow specific deliverables
+output/*
+!output/before_voice_tuning.mp4
+!output/after_voice_tuning.mp4
+!output/dubbed_audio.wav
