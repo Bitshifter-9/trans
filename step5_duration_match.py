@@ -16,13 +16,33 @@ def match_durations(input_meta_path, output_dir="output"):
 
     for seg in segments:
         idx = seg["index"]
-        tts_dur = seg["tts_duration"]
         target_dur = seg["target_duration"]
         wav_in = seg["wav_path"]
         wav_out = os.path.join(matched_dir, f"seg_{idx:04d}.wav")
 
         if target_dur <= 0:
             continue
+
+        # Strip leading/trailing silence that XTTS pads around the voice.
+        # silenceremove: remove up to 1 period of leading silence > -40dB
+        # and trim trailing silence longer than 0.15s.
+        stripped = wav_out + ".stripped.wav"
+        strip_cmd = [
+            "ffmpeg", "-y", "-i", wav_in,
+            "-af", (
+                "silenceremove=start_periods=1:start_silence=0.05:start_threshold=-40dB,"
+                "areverse,"
+                "silenceremove=start_periods=1:start_silence=0.15:start_threshold=-40dB,"
+                "areverse"
+            ),
+            "-ar", "24000", "-ac", "1", stripped
+        ]
+        strip_result = subprocess.run(strip_cmd, capture_output=True, text=True)
+        if strip_result.returncode == 0 and os.path.exists(stripped):
+            tts_dur = get_duration(stripped)
+            wav_in = stripped
+        else:
+            tts_dur = seg["tts_duration"]
 
         ratio = tts_dur / target_dur
 
