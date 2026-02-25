@@ -25,18 +25,38 @@ def match_durations(input_meta_path, output_dir="output"):
             continue
 
         ratio = tts_dur / target_dur
-        ratio = max(0.5, min(ratio, 8.0))
 
-        filters = build_tempo_filter(ratio)
-        filters += f",apad=whole_dur={target_dur}"
-
-        cmd = [
-            "ffmpeg", "-y", "-i", wav_in,
-            "-af", filters,
-            "-t", str(target_dur),
-            "-ar", "24000", "-ac", "1",
-            wav_out
-        ]
+        if tts_dur <= target_dur:
+            # Slow speech down (max 0.75x) to fill the window naturally;
+            # only pad a small residual silence rather than a big gap.
+            slow_ratio = max(ratio, 0.75)  # never slower than 0.75x
+            if slow_ratio < 0.98:           # worth slowing down
+                filters = build_tempo_filter(slow_ratio)
+                filters += f",apad=whole_dur={target_dur}"
+            else:                           # near-perfect fit, just pad
+                filters = f"apad=whole_dur={target_dur}"
+            cmd = [
+                "ffmpeg", "-y", "-i", wav_in,
+                "-af", filters,
+                "-t", str(target_dur),
+                "-ar", "24000", "-ac", "1",
+                wav_out
+            ]
+        else:
+            # Speed up speech, cap at 1.5x to keep it intelligible;
+            # add a short fade-out so any cut-off doesn't click.
+            compress_ratio = min(ratio, 1.5)
+            fade_start = max(target_dur - 0.08, 0)
+            filters = build_tempo_filter(compress_ratio)
+            filters += f",apad=whole_dur={target_dur}"
+            filters += f",afade=t=out:st={fade_start:.3f}:d=0.08"
+            cmd = [
+                "ffmpeg", "-y", "-i", wav_in,
+                "-af", filters,
+                "-t", str(target_dur),
+                "-ar", "24000", "-ac", "1",
+                wav_out
+            ]
 
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
@@ -59,7 +79,7 @@ def match_durations(input_meta_path, output_dir="output"):
             "wav_path": os.path.abspath(wav_out)
         })
 
-        status = "OK" if error < 0.1 else "WARN"
+        status = "PAD" if tts_dur <= target_dur else "COMPRESS"
         print(f"  [{idx:03d}] {tts_dur:.2f}s → {actual_dur:.2f}s (target {target_dur:.2f}s) [{status}]")
 
     avg_error = sum(s["duration_error"] for s in matched_segments) / max(len(matched_segments), 1)

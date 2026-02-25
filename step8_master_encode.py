@@ -7,10 +7,10 @@ def master_encode(input_video, output_dir="output"):
 
     print(f"[Step 8] Mastering and encoding: {input_video}")
 
+    # Keep only a gentle high-pass and a single-pass loudnorm.
+    # Removing acompressor and lowpass prevents pumping artifacts and beep sounds.
     audio_filter = (
         "highpass=f=80,"
-        "lowpass=f=12000,"
-        "acompressor=threshold=-18dB:ratio=4:attack=5:release=50,"
         "loudnorm=I=-16:LRA=11:TP=-1.5"
     )
 
