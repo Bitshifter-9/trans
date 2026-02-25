@@ -6,12 +6,33 @@ WAV2LIP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Wav2Lip"
 CHECKPOINT = os.path.join(WAV2LIP_DIR, "checkpoints", "wav2lip_gan.pth")
 
 
-def lip_sync(video_path, audio_path, output_dir="output"):
+def lip_sync(video_path, audio_path, output_dir="output", use_wav2lip=False):
     output_video = os.path.join(output_dir, "lipsync_video.mp4")
 
     video_path = os.path.abspath(video_path)
     audio_path = os.path.abspath(audio_path)
     output_video_abs = os.path.abspath(output_video)
+
+    if not use_wav2lip:
+        print("[Step 7] Wav2Lip skipped (CPU too slow). Muxing audio into video...")
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", video_path, "-i", audio_path,
+             "-c:v", "copy", "-map", "0:v:0", "-map", "1:a:0", "-shortest",
+             output_video_abs],
+            capture_output=True, text=True
+        )
+        info = {
+            "lipsync_video": output_video_abs,
+            "source_video": video_path,
+            "source_audio": audio_path,
+            "lip_sync_applied": False
+        }
+        meta_path = os.path.join(output_dir, "step7_meta.json")
+        with open(meta_path, "w") as f:
+            json.dump(info, f, indent=2)
+        print(f"[Step 7] Output: {output_video_abs}")
+        return info
+
     print(f"[Step 7] Running Wav2Lip lip sync...")
     print(f"[Step 7] Video: {video_path}")
     print(f"[Step 7] Audio: {audio_path}")
@@ -71,4 +92,5 @@ def lip_sync(video_path, audio_path, output_dir="output"):
 if __name__ == "__main__":
     video = sys.argv[1] if len(sys.argv) > 1 else "input.mp4"
     audio = sys.argv[2] if len(sys.argv) > 2 else "output/dubbed_audio.wav"
-    lip_sync(video, audio)
+    use_w2l = "--lipsync" in sys.argv
+    lip_sync(video, audio, use_wav2lip=use_w2l)

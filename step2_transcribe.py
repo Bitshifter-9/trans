@@ -2,7 +2,7 @@ import whisper
 import json, sys, os
 
 
-def transcribe(audio_path, output_dir="output", model_name="small"):
+def transcribe(audio_path, output_dir="output", model_name="medium"):
     print(f"[Step 2] Loading Whisper ({model_name})...")
     model = whisper.load_model(model_name)
 

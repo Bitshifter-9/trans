@@ -1,37 +1,24 @@
-import asyncio
-import edge_tts
 import json, sys, os, subprocess
-import numpy as np
-import librosa
-import soundfile as sf
+from TTS.api import TTS
 
 
-HINDI_VOICE = "hi-IN-MadhurNeural"
+XTTS_MODEL = "tts_models/multilingual/multi-dataset/xtts_v2"
 
 
-async def generate_tts(text, path):
-    await edge_tts.Communicate(text, HINDI_VOICE).save(path)
-
-
-def get_median_pitch(audio_path):
-    y, sr = librosa.load(audio_path, sr=None, mono=True)
-    f0, _, _ = librosa.pyin(y, fmin=librosa.note_to_hz("C2"), fmax=librosa.note_to_hz("C7"), sr=sr)
-    valid = f0[~np.isnan(f0)]
-    return float(np.median(valid)) if len(valid) > 10 else None
-
-
-def pitch_shift_to_match(wav_in, ref_pitch_hz, wav_out):
-    y, sr = librosa.load(wav_in, sr=None, mono=True)
-    f0, _, _ = librosa.pyin(y, fmin=librosa.note_to_hz("C2"), fmax=librosa.note_to_hz("C7"), sr=sr)
-    valid = f0[~np.isnan(f0)]
-    if len(valid) < 10:
-        sf.write(wav_out, y, sr)
-        return
-    tts_pitch = float(np.median(valid))
-    n_steps = 12.0 * np.log2(ref_pitch_hz / tts_pitch)
-    n_steps = float(np.clip(n_steps, -8, 8))
-    shifted = librosa.effects.pitch_shift(y, sr=sr, n_steps=n_steps)
-    sf.write(wav_out, shifted, sr)
+def extract_reference_clip(source_wav, segments, out_path, max_dur=10.0):
+    best = max(
+        [s for s in segments if (s["end"] - s["start"]) >= 3.0],
+        key=lambda s: s["end"] - s["start"],
+        default=segments[0]
+    )
+    dur = min(best["end"] - best["start"], max_dur)
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", source_wav,
+         "-ss", str(best["start"]), "-t", str(dur),
+         "-ar", "22050", "-ac", "1", out_path],
+        capture_output=True, text=True
+    )
+    return best
 
 
 def get_audio_duration(path):
@@ -52,39 +39,30 @@ def synthesize_all(input_meta_path, original_audio_path, output_dir="output"):
 
     segments = tr_data["segments"]
 
-    print("[Step 4] Analysing original speaker pitch...")
-    ref_pitch = get_median_pitch(original_audio_path)
-    if ref_pitch:
-        print(f"[Step 4] Speaker pitch: {ref_pitch:.1f} Hz")
-    else:
-        print("[Step 4] Pitch detection failed — skipping pitch match")
+    print("[Step 4] Loading XTTS-v2 model (voice cloning)...")
+    tts = TTS(XTTS_MODEL, gpu=False)
+
+    ref_clip_path = os.path.join(output_dir, "ref_speaker.wav")
+    best_ref = extract_reference_clip(original_audio_path, segments, ref_clip_path)
+    print(f"[Step 4] Reference clip: {best_ref['start']:.1f}s–{best_ref['end']:.1f}s")
 
     tts_segments = []
 
-    print(f"[Step 4] Generating Hindi TTS + pitch matching for {len(segments)} segments...")
+    print(f"[Step 4] Synthesising Hindi with XTTS-v2 voice cloning for {len(segments)} segments...")
 
     for i, seg in enumerate(segments):
         hindi_text = seg.get("hindi", "").strip()
         if not hindi_text:
             continue
 
-        mp3_path = os.path.join(tts_dir, f"seg_{i:04d}.mp3")
-        raw_wav  = os.path.join(tts_dir, f"seg_{i:04d}_raw.wav")
         wav_path = os.path.join(tts_dir, f"seg_{i:04d}.wav")
 
-        asyncio.run(generate_tts(hindi_text, mp3_path))
-
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", mp3_path, "-ar", "22050", "-ac", "1", raw_wav],
-            capture_output=True, text=True
+        tts.tts_to_file(
+            text=hindi_text,
+            speaker_wav=ref_clip_path,
+            language="hi",
+            file_path=wav_path
         )
-        os.remove(mp3_path)
-
-        if ref_pitch:
-            pitch_shift_to_match(raw_wav, ref_pitch, wav_path)
-            os.remove(raw_wav)
-        else:
-            os.rename(raw_wav, wav_path)
 
         subprocess.run(
             ["ffmpeg", "-y", "-i", wav_path, "-ar", "24000", "-ac", "1", wav_path + ".r.wav"],
@@ -108,9 +86,9 @@ def synthesize_all(input_meta_path, original_audio_path, output_dir="output"):
         print(f"  [{i:03d}] {target_duration:.2f}s target | {duration:.2f}s tts | {hindi_text[:50]}")
 
     info = {
-        "tts_engine": "edge-tts + pitch-match",
-        "voice": HINDI_VOICE,
-        "ref_pitch_hz": round(ref_pitch, 2) if ref_pitch else None,
+        "tts_engine": "xtts-v2",
+        "model": XTTS_MODEL,
+        "ref_clip": ref_clip_path,
         "total_segments": len(tts_segments),
         "segments": tts_segments
     }

@@ -47,9 +47,14 @@ def match_durations(input_meta_path, output_dir="output"):
         ratio = tts_dur / target_dur
 
         if tts_dur <= target_dur:
-            # Play at natural speed; pad silence for the remainder.
-            # Stretching speech is more jarring than a silent tail.
-            filters = f"apad=whole_dur={target_dur}"
+            # Slow speech just enough to fill the window (floor 0.85x = barely noticeable).
+            # This eliminates the dead-silence gap without sounding stretched.
+            slow_ratio = max(tts_dur / target_dur, 0.85)
+            if slow_ratio < 0.98:
+                filters = build_tempo_filter(slow_ratio)
+                filters += f",apad=whole_dur={target_dur}"
+            else:
+                filters = f"apad=whole_dur={target_dur}"
             cmd = [
                 "ffmpeg", "-y", "-i", wav_in,
                 "-af", filters,
@@ -58,13 +63,19 @@ def match_durations(input_meta_path, output_dir="output"):
                 wav_out
             ]
         else:
-            # Speed up speech, cap at 1.5x to keep it intelligible;
-            # add a short fade-out so any cut-off doesn't click.
-            compress_ratio = min(ratio, 1.5)
-            fade_start = max(target_dur - 0.08, 0)
-            filters = build_tempo_filter(compress_ratio)
-            filters += f",apad=whole_dur={target_dur}"
-            filters += f",afade=t=out:st={fade_start:.3f}:d=0.08"
+            # Speed up speech — but cap at 1.3x so it stays intelligible.
+            # If TTS is longer than 1.3x the window, trim the HEAD at natural speed
+            # with a short fade-out: the speech starts clear and fades cleanly.
+            if ratio <= 1.3:
+                compress_ratio = ratio
+                fade_start = max(target_dur - 0.1, 0)
+                filters = build_tempo_filter(compress_ratio)
+                filters += f",apad=whole_dur={target_dur}"
+                filters += f",afade=t=out:st={fade_start:.3f}:d=0.1"
+            else:
+                # Natural speed, hard-trim to target with gentle fade-out
+                fade_start = max(target_dur - 0.15, 0)
+                filters = f"afade=t=out:st={fade_start:.3f}:d=0.15"
             cmd = [
                 "ffmpeg", "-y", "-i", wav_in,
                 "-af", filters,
