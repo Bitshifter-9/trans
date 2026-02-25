@@ -8,15 +8,15 @@ def translate(input_meta_path, output_dir="output"):
 
     model_name = "facebook/nllb-200-distilled-600M"
     print(f"[Step 3] Loading NLLB-200: {model_name}")
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, src_lang="eng_Latn")
     model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
 
     hindi_token_id = tokenizer.convert_tokens_to_ids("hin_Deva")
 
     translated_segments = []
     for seg in asr_data["segments"]:
-        kannada_text = seg["text"]
-        inputs = tokenizer(kannada_text, return_tensors="pt", padding=True, truncation=True)
+        english_text = seg["text"]
+        inputs = tokenizer(english_text, return_tensors="pt", padding=True, truncation=True)
         outputs = model.generate(
             **inputs,
             forced_bos_token_id=hindi_token_id,
@@ -28,16 +28,16 @@ def translate(input_meta_path, output_dir="output"):
         translated_segments.append({
             "start": seg["start"],
             "end": seg["end"],
-            "kannada": kannada_text,
+            "english": english_text,
             "hindi": hindi_text
         })
-        print(f"  [{seg['start']:.1f}-{seg['end']:.1f}] {kannada_text} → {hindi_text}")
+        print(f"  [{seg['start']:.1f}-{seg['end']:.1f}] {english_text} → {hindi_text}")
 
     full_hindi = " ".join(s["hindi"] for s in translated_segments)
 
     info = {
         "model": model_name,
-        "source": "kn",
+        "source": "en",
         "target": "hi",
         "full_hindi": full_hindi,
         "segments": translated_segments
