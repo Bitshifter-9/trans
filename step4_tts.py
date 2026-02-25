@@ -1,16 +1,37 @@
+import asyncio
+import edge_tts
 import json, sys, os, subprocess
-import torch
-from f5_tts.api import F5TTS
+import numpy as np
+import librosa
+import soundfile as sf
 
 
-def extract_reference_clip(source_wav, start, end, out_path, max_dur=10.0):
-    duration = min(end - start, max_dur)
-    subprocess.run(
-        ["ffmpeg", "-y", "-i", source_wav,
-         "-ss", str(start), "-t", str(duration),
-         "-ar", "24000", "-ac", "1", out_path],
-        capture_output=True, text=True
-    )
+HINDI_VOICE = "hi-IN-MadhurNeural"
+
+
+async def generate_tts(text, path):
+    await edge_tts.Communicate(text, HINDI_VOICE).save(path)
+
+
+def get_median_pitch(audio_path):
+    y, sr = librosa.load(audio_path, sr=None, mono=True)
+    f0, _, _ = librosa.pyin(y, fmin=librosa.note_to_hz("C2"), fmax=librosa.note_to_hz("C7"), sr=sr)
+    valid = f0[~np.isnan(f0)]
+    return float(np.median(valid)) if len(valid) > 10 else None
+
+
+def pitch_shift_to_match(wav_in, ref_pitch_hz, wav_out):
+    y, sr = librosa.load(wav_in, sr=None, mono=True)
+    f0, _, _ = librosa.pyin(y, fmin=librosa.note_to_hz("C2"), fmax=librosa.note_to_hz("C7"), sr=sr)
+    valid = f0[~np.isnan(f0)]
+    if len(valid) < 10:
+        sf.write(wav_out, y, sr)
+        return
+    tts_pitch = float(np.median(valid))
+    n_steps = 12.0 * np.log2(ref_pitch_hz / tts_pitch)
+    n_steps = float(np.clip(n_steps, -8, 8))
+    shifted = librosa.effects.pitch_shift(y, sr=sr, n_steps=n_steps)
+    sf.write(wav_out, shifted, sr)
 
 
 def get_audio_duration(path):
@@ -31,66 +52,48 @@ def synthesize_all(input_meta_path, original_audio_path, output_dir="output"):
 
     segments = tr_data["segments"]
 
-    print("[Step 4] Loading F5-TTS model...")
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
-    tts = F5TTS(device=device)
-    print(f"[Step 4] Using device: {device}")
-
-    ref_clip_path = os.path.join(output_dir, "ref_speaker.wav")
-    best_ref = max(
-        [s for s in segments if (s["end"] - s["start"]) >= 3.0],
-        key=lambda s: s["end"] - s["start"],
-        default=segments[0]
-    )
-    extract_reference_clip(
-        original_audio_path,
-        best_ref["start"],
-        best_ref["end"],
-        ref_clip_path
-    )
-    ref_text = best_ref.get("english", "").strip() or "This is a reference audio sample."
-    print(f"[Step 4] Reference: {best_ref['start']:.1f}s-{best_ref['end']:.1f}s | text: {ref_text[:60]}")
+    print("[Step 4] Analysing original speaker pitch...")
+    ref_pitch = get_median_pitch(original_audio_path)
+    if ref_pitch:
+        print(f"[Step 4] Speaker pitch: {ref_pitch:.1f} Hz")
+    else:
+        print("[Step 4] Pitch detection failed — skipping pitch match")
 
     tts_segments = []
 
-    print(f"[Step 4] Generating Hindi speech with voice cloning for {len(segments)} segments...")
+    print(f"[Step 4] Generating Hindi TTS + pitch matching for {len(segments)} segments...")
 
     for i, seg in enumerate(segments):
         hindi_text = seg.get("hindi", "").strip()
         if not hindi_text:
             continue
 
+        mp3_path = os.path.join(tts_dir, f"seg_{i:04d}.mp3")
+        raw_wav  = os.path.join(tts_dir, f"seg_{i:04d}_raw.wav")
         wav_path = os.path.join(tts_dir, f"seg_{i:04d}.wav")
-        target_duration = seg["end"] - seg["start"]
 
-        tmp_path = wav_path + ".tmp.wav"
-        tts.infer(
-            ref_file=ref_clip_path,
-            ref_text=ref_text,
-            gen_text=hindi_text,
-            file_wave=tmp_path,
-            remove_silence=True,
-            seed=42
+        asyncio.run(generate_tts(hindi_text, mp3_path))
+
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", mp3_path, "-ar", "22050", "-ac", "1", raw_wav],
+            capture_output=True, text=True
         )
-        natural_dur = get_audio_duration(tmp_path)
-        speed_needed = natural_dur / target_duration
-        speed_needed = max(0.8, min(speed_needed, 3.5))
+        os.remove(mp3_path)
 
-        if speed_needed > 1.15:
-            tts.infer(
-                ref_file=ref_clip_path,
-                ref_text=ref_text,
-                gen_text=hindi_text,
-                file_wave=wav_path,
-                remove_silence=True,
-                speed=speed_needed,
-                seed=42
-            )
-            os.remove(tmp_path)
+        if ref_pitch:
+            pitch_shift_to_match(raw_wav, ref_pitch, wav_path)
+            os.remove(raw_wav)
         else:
-            os.rename(tmp_path, wav_path)
+            os.rename(raw_wav, wav_path)
+
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", wav_path, "-ar", "24000", "-ac", "1", wav_path + ".r.wav"],
+            capture_output=True, text=True
+        )
+        os.replace(wav_path + ".r.wav", wav_path)
 
         duration = get_audio_duration(wav_path)
+        target_duration = seg["end"] - seg["start"]
 
         tts_segments.append({
             "index": i,
@@ -105,9 +108,9 @@ def synthesize_all(input_meta_path, original_audio_path, output_dir="output"):
         print(f"  [{i:03d}] {target_duration:.2f}s target | {duration:.2f}s tts | {hindi_text[:50]}")
 
     info = {
-        "tts_engine": "f5-tts",
-        "ref_text": ref_text,
-        "ref_clip": ref_clip_path,
+        "tts_engine": "edge-tts + pitch-match",
+        "voice": HINDI_VOICE,
+        "ref_pitch_hz": round(ref_pitch, 2) if ref_pitch else None,
         "total_segments": len(tts_segments),
         "segments": tts_segments
     }

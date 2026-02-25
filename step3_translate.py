@@ -21,7 +21,9 @@ def translate(input_meta_path, output_dir="output"):
             **inputs,
             forced_bos_token_id=hindi_token_id,
             max_length=512,
-            num_beams=5
+            num_beams=5,
+            repetition_penalty=1.5,
+            no_repeat_ngram_size=4
         )
         hindi_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
 

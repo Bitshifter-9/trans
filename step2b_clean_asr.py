@@ -52,7 +52,10 @@ def fix_common_asr_errors(text):
     fixes = {
         "bookings": "school",
         "booking": "school",
+        "bookshop": "school",
+        "book shop": "school",
         "the bookings": "school",
+        "the bookshop": "school",
         "ID card": "uniform",
         "nanny": "caretaker",
     }
