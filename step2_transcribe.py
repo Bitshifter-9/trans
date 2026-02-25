@@ -6,10 +6,10 @@ def transcribe(audio_path, output_dir="output", model_name="small"):
     print(f"[Step 2] Loading Whisper ({model_name})...")
     model = whisper.load_model(model_name)
 
-    print(f"[Step 2] Transcribing: {audio_path}")
+    print(f"[Step 2] Transcribing Kannada: {audio_path}")
     result = model.transcribe(
         audio_path,
-        task="translate",
+        task="transcribe",
         language="kn",
         verbose=False
     )
@@ -26,7 +26,7 @@ def transcribe(audio_path, output_dir="output", model_name="small"):
 
     info = {
         "audio_path": audio_path,
-        "language_detected": result.get("language", "kn"),
+        "language": "kn",
         "full_text": full_text,
         "segments": segments
     }
@@ -35,7 +35,7 @@ def transcribe(audio_path, output_dir="output", model_name="small"):
     with open(meta_path, "w") as f:
         json.dump(info, f, indent=2, ensure_ascii=False)
 
-    print(f"[Step 2] Transcription done ({len(segments)} segments)")
+    print(f"[Step 2] Kannada transcription done ({len(segments)} segments)")
     print(f"[Step 2] Text: {full_text[:200]}...")
     return info
 
