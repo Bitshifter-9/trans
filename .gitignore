@@ -5,3 +5,4 @@ __pycache__/
 *.wav
 *.mp4
 Wav2Lip/
+.DS_Store

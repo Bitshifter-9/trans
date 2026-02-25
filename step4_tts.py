@@ -1,12 +1,10 @@
 import json, sys, os, subprocess
-import numpy as np
-import soundfile as sf
+import torch
 from f5_tts.api import F5TTS
 
 
-def extract_reference_clip(source_wav, start, end, out_path, min_dur=5.0, max_dur=12.0):
+def extract_reference_clip(source_wav, start, end, out_path, max_dur=10.0):
     duration = min(end - start, max_dur)
-    duration = max(duration, min(end - start, min_dur))
     subprocess.run(
         ["ffmpeg", "-y", "-i", source_wav,
          "-ss", str(start), "-t", str(duration),
@@ -34,7 +32,9 @@ def synthesize_all(input_meta_path, original_audio_path, output_dir="output"):
     segments = tr_data["segments"]
 
     print("[Step 4] Loading F5-TTS model...")
-    tts = F5TTS(device="cpu")
+    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    tts = F5TTS(device=device)
+    print(f"[Step 4] Using device: {device}")
 
     ref_clip_path = os.path.join(output_dir, "ref_speaker.wav")
     best_ref = max(
@@ -62,7 +62,7 @@ def synthesize_all(input_meta_path, original_audio_path, output_dir="output"):
 
         wav_path = os.path.join(tts_dir, f"seg_{i:04d}.wav")
 
-        audio_arr, sr = tts.infer(
+        audio_arr, sr, _ = tts.infer(
             ref_file=ref_clip_path,
             ref_text=ref_text,
             gen_text=hindi_text,
